@@ -1,4 +1,131 @@
-<script type="module">
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bybit Auto-Trader Control Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Estilos customizados para o log */
+        #log-output {
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: monospace;
+            font-size: 13px;
+            background-color: #1f2937; /* Dark background */
+            color: #ffffff;
+            border-radius: 0.375rem;
+            padding: 0.75rem;
+        }
+        .log-entry {
+            line-height: 1.5;
+        }
+        .log-prefix {
+            font-weight: bold;
+        }
+        .log-info { color: #9ca3af; }
+        .log-success { color: #10b981; }
+        .log-error { color: #f87171; }
+        .log-warn { color: #fbbf24; }
+        .log-check { color: #60a5fa; }
+        .log-optimize { color: #a78bfa; }
+        .log-buy { color: #10b981; }
+        .log-sell { color: #f87171; }
+        
+        .text-bybit-red { color: #e73030; }
+        .text-bybit-green { color: #00bf8a; }
+        .text-bybit-orange { color: #f0b90b; }
+
+        .active-tf {
+            background-color: #f0b90b; /* Cor de destaque */
+            color: white;
+            font-weight: bold;
+            border-color: #f0b90b;
+        }
+    </style>
+</head>
+<body class="bg-gray-800 text-white min-h-screen p-4">
+
+    <div id="errorModal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center hidden z-50">
+        <div class="bg-gray-700 p-6 rounded-lg shadow-xl max-w-sm">
+            <h2 class="text-xl font-bold text-red-400 mb-4">Erro Crítico</h2>
+            <p id="errorMessage" class="text-gray-200 mb-6"></p>
+            <button onclick="closeErrorModal()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">
+                Fechar
+            </button>
+        </div>
+    </div>
+
+    <div class="max-w-4xl mx-auto">
+        <header class="mb-6 border-b border-gray-700 pb-3 flex justify-between items-center">
+            <h1 class="text-3xl font-extrabold text-bybit-orange">Bybit Auto-Trader 🤖</h1>
+            <p class="text-sm text-gray-400">Desenvolvido para PAMONTEIR</p>
+        </header>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-gray-700 p-4 rounded-lg shadow-md">
+                <h2 class="text-lg font-semibold text-gray-300 mb-1">Status do Bot</h2>
+                <div class="flex items-center">
+                    <span id="botStatus" class="text-xl font-bold text-bybit-red mr-2">PARADO</span>
+                    <div id="loading-spinner" class="h-4 w-4 border-2 border-gray-200 border-t-bybit-orange rounded-full animate-spin hidden"></div>
+                </div>
+            </div>
+            <div class="bg-gray-700 p-4 rounded-lg shadow-md">
+                <h2 class="text-lg font-semibold text-gray-300 mb-1">Ativo Atual / PNL</h2>
+                <p id="currentHolding" class="text-xl font-bold">USDT / PNL: NA</p>
+            </div>
+            <div class="bg-gray-700 p-4 rounded-lg shadow-md">
+                <h2 class="text-lg font-semibold text-gray-300 mb-1">Saldo Atual</h2>
+                <p id="currentBalance" class="text-xl font-bold">0.00000000 USDT</p>
+            </div>
+        </div>
+
+        <div class="bg-gray-700 p-4 rounded-lg shadow-md mb-6 flex justify-between space-x-4">
+            <button id="startButton" onclick="startBot()" class="w-1/2 bg-bybit-green hover:bg-green-700 text-white font-bold py-3 rounded-lg text-lg transition duration-150 ease-in-out disabled:opacity-50" disabled>
+                INICIAR BOT
+            </button>
+            <button id="stopButton" onclick="stopBot()" class="w-1/2 bg-bybit-red hover:bg-red-700 text-white font-bold py-3 rounded-lg text-lg transition duration-150 ease-in-out disabled:opacity-50" disabled>
+                PARAR BOT
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div class="bg-gray-700 p-4 rounded-lg shadow-md">
+                <h2 class="text-lg font-semibold text-gray-300 mb-2">Timeframe (RSI)</h2>
+                <div class="flex space-x-2">
+                    <button data-tf="5" class="tf-btn bg-gray-600 hover:bg-gray-500 text-white py-1 px-3 rounded text-sm transition duration-150 ease-in-out">5m</button>
+                    <button data-tf="15" class="tf-btn bg-gray-600 hover:bg-gray-500 text-white py-1 px-3 rounded text-sm transition duration-150 ease-in-out">15m</button>
+                    <button data-tf="60" class="tf-btn bg-gray-600 hover:bg-gray-500 text-white py-1 px-3 rounded text-sm transition duration-150 ease-in-out">1h</button>
+                    <button data-tf="240" class="tf-btn bg-gray-600 hover:bg-gray-500 text-white py-1 px-3 rounded text-sm transition duration-150 ease-in-out">4h</button>
+                </div>
+            </div>
+            <div class="bg-gray-700 p-4 rounded-lg shadow-md">
+                <h2 class="text-lg font-semibold text-gray-300 mb-2">Monitoramento</h2>
+                <div class="p-2 bg-gray-600 rounded-lg text-sm text-gray-300">
+                    <p>Ativo monitorado: BTCUSDT</p>
+                    <p>Sincronizando com o Back-end...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div id="auth-status" class="hidden"></div>
+        <p id="userIdDisplay" class="text-xs text-gray-500 text-center mb-4">Autenticação: N/A</p>
+
+        <div class="mb-6">
+            <h2 class="text-xl font-semibold text-gray-300 mb-2 flex justify-between items-center">
+                Log de Atividade
+                <button onclick="downloadLog()" class="bg-gray-600 hover:bg-gray-500 text-white text-xs py-1 px-2 rounded transition duration-150 ease-in-out">
+                    Download Log
+                </button>
+            </h2>
+            <div id="log-output" class="h-96">
+                </div>
+        </div>
+    </div>
+    
+    <script type="module">
     // =================================================================
     // CONFIGURAÇÃO CRÍTICA (FINAL)
     // =================================================================
@@ -367,3 +494,5 @@
     });
 
 </script>
+</body>
+</html>
