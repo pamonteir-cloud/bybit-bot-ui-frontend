@@ -1,9 +1,9 @@
 <script type="module">
     // =================================================================
-    // CONFIGURAÇÃO CRÍTICA
+    // CONFIGURAÇÃO CRÍTICA (FINAL)
     // =================================================================
     
-    // 🔴 CRÍTICO: SUBSTITUA PELA URL REAL DO SEU SERVIÇO BACK-END NO RENDER
+    // A URL do seu serviço Back-end no Render
     const BACKEND_URL = 'https://bybit-trading-backend-pg6g.onrender.com'; 
 
     // Firebase Imports
@@ -34,10 +34,7 @@
         entryPrice: 0, 
     };
 
-    // --- CONFIGURAÇÕES DE NOTIFICAÇÃO (MANTIDAS, MAS SÓ O BACK-END CHAMA O TELEGRAM) ---
-    const TELEGRAM_BOT_TOKEN = "8553707509:AAEGp-JmpUV-cek3kRVlrVzTSVetPUvetJw"; 
-    const TELEGRAM_CHAT_ID = "6543017087"; 
-
+    // --- Configurações de UI/Log ---
     let isUserScrolling = false; 
     const logOutput = document.getElementById('log-output');
 
@@ -50,14 +47,6 @@
                 isUserScrolling = false;
             }
         });
-    }
-
-    // A função sendNotification não precisa mais fazer chamadas FETCH, pois
-    // o bot na nuvem (bot_logic.js) é quem deve notificar o Telegram.
-    // Esta função foi simplificada.
-    function sendNotification(message) {
-        // Logado apenas no console do navegador, não envia mais para o Telegram.
-        console.warn(`[UI ALERT - Telegram Removido] ${message}`);
     }
 
     /** Registra uma mensagem no log da UI com auto-scroll. */
@@ -95,7 +84,6 @@
     }
 
     window.downloadLog = () => {
-        // ... (Log de Download mantido inalterado) ...
         const logWindow = document.getElementById('log-output');
         if (!logWindow) {
             alert("Erro: Elemento de log não encontrado.");
@@ -119,7 +107,6 @@
         logMessage(`Log salvo com sucesso como: ${filename}`, 'success');
     };
 
-
     // --- Funções de Utilidade (Modal, Firebase) ---
     
     window.closeErrorModal = () => {
@@ -133,7 +120,6 @@
     }
 
     async function initializeFirebase() {
-        // ... (Inicialização Firebase mantida inalterada) ...
         try {
             if (Object.keys(firebaseConfig).length === 0) {
                 logMessage('Configuração do Firebase ausente. O estado não será persistido.', 'warn');
@@ -180,7 +166,6 @@
 
     function setupFirestoreListeners() {
         if (!db || !userId) return;
-        // O caminho do documento de estado deve coincidir com o que o bot_logic.js está usando
         const userStateRef = doc(db, `bot_state/current_state_${userId}`); 
 
         onSnapshot(userStateRef, (docSnap) => {
@@ -208,7 +193,6 @@
     }
 
     // A função saveBotState é mantida para que a UI possa iniciar o documento
-    // e para salvar configurações de UI futuras.
     async function saveBotState() {
         if (!db || !userId) return;
         const userStateRef = doc(db, `bot_state/current_state_${userId}`); 
@@ -285,6 +269,7 @@
         const currentHoldingDisplay = document.getElementById('currentHolding');
         const currentBalanceDisplay = document.getElementById('currentBalance');
         const tfButtons = document.querySelectorAll('.tf-btn');
+        const authStatus = document.getElementById('auth-status');
 
         if (startButton && stopButton) {
             if (botState.isRunning) {
@@ -307,7 +292,6 @@
         // PNL baseado no entryPrice (que deve ser atualizado pelo bot_logic.js no Firebase)
         let pnlDisplay = '--%';
         if (botState.currentHolding !== BASE_COIN && botState.entryPrice > 0) {
-            // Se tiver um preço de entrada, a UI não consegue calcular o PNL ao vivo, apenas mostra o status
              pnlDisplay = 'Aguardando Sincronização...'; 
         } else if (botState.currentHolding === BASE_COIN) {
              pnlDisplay = 'NA';
@@ -323,7 +307,6 @@
             }
         });
         
-        const authStatus = document.getElementById('auth-status');
         if (authStatus) {
             if (isAuthReady && userId !== 'offline_user' && userId !== 'init_failed' && userId !== 'unauthenticated') {
                  authStatus.style.display = 'block';
@@ -346,7 +329,7 @@
     document.addEventListener('DOMContentLoaded', (event) => {
         logMessage("DOM totalmente carregado. Iniciando serviços...", 'info');
         
-        // REFACTOR: Listener de Timeframe agora chama a API para mudar no servidor
+        // CORREÇÃO CRÍTICA: Listener de Timeframe agora faz a chamada API
         document.querySelectorAll('.tf-btn').forEach(button => {
             button.addEventListener('click', async function() {
                 const newTimeframe = this.getAttribute('data-tf');
@@ -372,8 +355,8 @@
             });
         });
 
-        // 🛑 REMOVIDO: fetchAndFilterSpotSymbols() pois isso é trabalho do servidor
-        // Mantenha o display de moedas como Carregando
+        // REMOVIDO: fetchAndFilterSpotSymbols() - Isso é trabalho do servidor
+        
         const monitoredDisplay = document.querySelector('.p-2.bg-green-50 p:nth-child(2)');
         if (monitoredDisplay) {
             monitoredDisplay.innerText = `Sincronizando com o Back-end...`;
@@ -382,6 +365,5 @@
         initializeFirebase(); 
         updateUIStatus();
     });
-
 
 </script>
