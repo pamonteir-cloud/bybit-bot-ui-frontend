@@ -1,0 +1,386 @@
+<script type="module">
+    // =================================================================
+    // CONFIGURAÇÃO CRÍTICA
+    // =================================================================
+    
+    // 🔴 CRÍTICO: SUBSTITUA PELA URL REAL DO SEU SERVIÇO BACK-END NO RENDER
+    const BACKEND_URL = 'https://bybit-trading-backend-pg6g.onrender.com'; 
+
+    // Firebase Imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    
+    // Variáveis Globais (Mantidas apenas para leitura de estado)
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    let db, auth;
+    let userId = null;
+    let isAuthReady = false;
+    
+    // Constantes mantidas apenas para referências na UI
+    const BASE_COIN = 'USDT'; 
+    const SOURCE_ACCOUNT = 'FUND'; 
+
+    // Estado do Bot (Sincronizado com Firestore)
+    let botState = {
+        isRunning: false,
+        currentHolding: 'USDT', 
+        currentAccountType: SOURCE_ACCOUNT, 
+        timeframe: '60', 
+        balanceAmount: 0, 
+        entryPrice: 0, 
+    };
+
+    // --- CONFIGURAÇÕES DE NOTIFICAÇÃO (MANTIDAS, MAS SÓ O BACK-END CHAMA O TELEGRAM) ---
+    const TELEGRAM_BOT_TOKEN = "8553707509:AAEGp-JmpUV-cek3kRVlrVzTSVetPUvetJw"; 
+    const TELEGRAM_CHAT_ID = "6543017087"; 
+
+    let isUserScrolling = false; 
+    const logOutput = document.getElementById('log-output');
+
+    if (logOutput) {
+        logOutput.addEventListener('wheel', (e) => {
+            if (e.deltaY < 0) {
+                isUserScrolling = true;
+            } 
+            else if (logOutput.scrollHeight - logOutput.clientHeight <= logOutput.scrollTop + 50) {
+                isUserScrolling = false;
+            }
+        });
+    }
+
+    // A função sendNotification não precisa mais fazer chamadas FETCH, pois
+    // o bot na nuvem (bot_logic.js) é quem deve notificar o Telegram.
+    // Esta função foi simplificada.
+    function sendNotification(message) {
+        // Logado apenas no console do navegador, não envia mais para o Telegram.
+        console.warn(`[UI ALERT - Telegram Removido] ${message}`);
+    }
+
+    /** Registra uma mensagem no log da UI com auto-scroll. */
+    function logMessage(message, type = 'info') {
+        const timestamp = new Date().toLocaleTimeString('pt-BR');
+        let colorClass = 'log-info';
+        let prefix = ' [INFO] ';
+        
+        switch(type) {
+            case 'success': colorClass = 'log-success'; prefix = ' [SUCESSO] '; break;
+            case 'error': colorClass = 'log-error'; prefix = ' [ERRO] '; break; 
+            case 'warn': colorClass = 'log-warn'; prefix = ' [ALERTA] '; break;
+            case 'check': colorClass = 'log-check'; prefix = ' [VERIFICAÇÃO] '; break; 
+            case 'optimize': colorClass = 'log-optimize'; prefix = ' [OTIMIZAÇÃO] '; break;
+            case 'buy': colorClass = 'log-buy'; prefix = ' [COMPRA] '; break; 
+            case 'sell': colorClass = 'log-sell'; prefix = ' [VENDA] '; break; 
+            case 'routine': console.log(`[${timestamp}] [ROTINA] ${message}`); return; 
+        }
+        
+        const logEntry = document.createElement('div');
+        logEntry.classList.add('log-entry', colorClass);
+        logEntry.innerHTML = `[${timestamp}] <span class="log-prefix">${prefix}</span><span class="log-text">${message}</span>`;
+
+        if (logOutput) {
+            logOutput.appendChild(logEntry); 
+            if (!isUserScrolling) {
+                logOutput.scrollTop = logOutput.scrollHeight;
+            }
+            if (logOutput.children.length > 500) {
+                logOutput.removeChild(logOutput.firstChild);
+            }
+        } else {
+            console.log(`[${timestamp}] [${prefix.trim()}] ${message}`);
+        }
+    }
+
+    window.downloadLog = () => {
+        // ... (Log de Download mantido inalterado) ...
+        const logWindow = document.getElementById('log-output');
+        if (!logWindow) {
+            alert("Erro: Elemento de log não encontrado.");
+            return;
+        }
+        
+        let logText = "--- Bot Trading Log (Bybit/RSI/Volume) ---\n";
+        for (let i = 0; i < logWindow.children.length; i++) {
+            logText += logWindow.children[i].textContent.trim() + "\n";
+        }
+
+        const filename = `BybitBot_Log_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+        const blob = new Blob([logText], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        logMessage(`Log salvo com sucesso como: ${filename}`, 'success');
+    };
+
+
+    // --- Funções de Utilidade (Modal, Firebase) ---
+    
+    window.closeErrorModal = () => {
+        document.getElementById('errorModal').classList.add('hidden');
+    };
+    
+    function showErrorModal(message) {
+        document.getElementById('errorMessage').innerText = message;
+        document.getElementById('errorModal').classList.remove('hidden');
+        logMessage(`Modal de Erro: ${message}`, 'error');
+    }
+
+    async function initializeFirebase() {
+        // ... (Inicialização Firebase mantida inalterada) ...
+        try {
+            if (Object.keys(firebaseConfig).length === 0) {
+                logMessage('Configuração do Firebase ausente. O estado não será persistido.', 'warn');
+                isAuthReady = true;
+                userId = 'offline_user';
+                updateUIStatus();
+                return;
+            }
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+                await signInAnonymously(auth);
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    userId = user.uid;
+                    logMessage(`Usuário autenticado: ${userId}.`, 'info');
+                    isAuthReady = true;
+                    document.getElementById('userIdDisplay').innerText = userId;
+                    setupFirestoreListeners();
+                    updateUIStatus();
+                } else {
+                    logMessage('Nenhum usuário autenticado.', 'error');
+                    isAuthReady = true;
+                    userId = 'unauthenticated';
+                    document.getElementById('userIdDisplay').innerText = 'Não Autenticado';
+                    updateUIStatus();
+                }
+            });
+        } catch (e) {
+            console.error("Erro ao inicializar Firebase:", e);
+            logMessage(`Falha na inicialização do Firebase: ${e.message}`, 'error');
+            isAuthReady = true;
+            userId = 'init_failed';
+            document.getElementById('userIdDisplay').innerText = 'Falha na Inicialização';
+            updateUIStatus(); 
+        }
+    }
+
+    function setupFirestoreListeners() {
+        if (!db || !userId) return;
+        // O caminho do documento de estado deve coincidir com o que o bot_logic.js está usando
+        const userStateRef = doc(db, `bot_state/current_state_${userId}`); 
+
+        onSnapshot(userStateRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const savedState = docSnap.data();
+                
+                // A UI LÊ O ESTADO SALVO PELO BOT NA NUVEM
+                botState.isRunning = savedState.isRunning ?? false;
+                botState.currentHolding = savedState.currentHolding ?? 'USDT'; 
+                botState.timeframe = savedState.timeframe ?? '60';
+                botState.balanceAmount = savedState.balanceAmount ?? 0;
+                botState.entryPrice = savedState.entryPrice ?? 0;
+                
+                updateUIStatus();
+                
+                logMessage('Estado do bot sincronizado do Firestore.', 'info');
+            } else {
+                saveBotState();
+                logMessage('Iniciando novo estado do bot no Firestore.', 'info');
+            }
+        }, (error) => {
+            console.error("Erro no Listener do Firestore:", error);
+            logMessage(`Erro ao ouvir estado do bot: ${error.message}`, 'error');
+        });
+    }
+
+    // A função saveBotState é mantida para que a UI possa iniciar o documento
+    // e para salvar configurações de UI futuras.
+    async function saveBotState() {
+        if (!db || !userId) return;
+        const userStateRef = doc(db, `bot_state/current_state_${userId}`); 
+        try {
+            await setDoc(userStateRef, {
+                isRunning: botState.isRunning,
+                currentHolding: botState.currentHolding,
+                timeframe: botState.timeframe,
+                // O BOT NA NUVEM DEVE SALVAR balanceAmount E entryPrice
+                lastUpdateUI: new Date().toISOString() // Marcador de atualização da UI
+            }, { merge: true });
+        } catch (e) {
+            console.error("Erro ao salvar estado do bot:", e);
+            logMessage(`Falha ao salvar estado no Firestore: ${e.message}`, 'error');
+        }
+    }
+    
+    // =================================================================
+    // FUNÇÕES DE CONTROLE (REFATORADAS PARA USAR A API DO BACK-END)
+    // =================================================================
+
+    /** Envia o comando de INICIAR para o Back-end (server.js). */
+    window.startBot = async () => {
+        if (botState.isRunning) {
+            logMessage("Bot já está em execução (Sincronizado via Firestore).", 'warn');
+            return;
+        }
+        
+        logMessage("Enviando comando de INICIAR ao servidor (API)...", 'info');
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/start`, { method: 'POST' });
+            const data = await response.json();
+            
+            if (data.success) {
+                logMessage(`✅ Comando START enviado ao servidor com sucesso. Servidor respondeu: ${data.message}`, 'success');
+            } else {
+                logMessage(`❌ Falha ao iniciar bot via API: ${data.message}`, 'error');
+            }
+        } catch (e) {
+            logMessage(`❌ Falha de conexão ao enviar START para API (${BACKEND_URL}): ${e.message}`, 'error');
+        }
+        // O Firestore Listener irá detectar a mudança de 'isRunning' e atualizar a UI.
+    };
+
+    /** Envia o comando de PARAR para o Back-end (server.js). */
+    window.stopBot = async () => {
+        if (!botState.isRunning) {
+            logMessage("Bot já está parado (Sincronizado via Firestore).", 'warn');
+            return;
+        }
+
+        logMessage("Enviando comando de PARAR ao servidor (API)...", 'warn');
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/stop`, { method: 'POST' });
+            const data = await response.json();
+            
+            if (data.success) {
+                logMessage(`✅ Comando STOP enviado ao servidor com sucesso. Servidor respondeu: ${data.message}`, 'warn');
+            } else {
+                logMessage(`❌ Falha ao parar bot via API: ${data.message}`, 'error');
+            }
+        } catch (e) {
+            logMessage(`❌ Falha de conexão ao enviar STOP para API (${BACKEND_URL}): ${e.message}`, 'error');
+        }
+        // O Firestore Listener irá detectar a mudança de 'isRunning' e atualizar a UI.
+    };
+
+    /** Atualiza o status da interface. */
+    function updateUIStatus() {
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const botStatus = document.getElementById('botStatus');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const currentHoldingDisplay = document.getElementById('currentHolding');
+        const currentBalanceDisplay = document.getElementById('currentBalance');
+        const tfButtons = document.querySelectorAll('.tf-btn');
+
+        if (startButton && stopButton) {
+            if (botState.isRunning) {
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                botStatus.innerText = "EXECUTANDO";
+                botStatus.classList.remove('text-bybit-red', 'text-bybit-orange');
+                botStatus.classList.add('text-bybit-green');
+                loadingSpinner.classList.remove('hidden');
+            } else {
+                startButton.disabled = false;
+                stopButton.disabled = true;
+                botStatus.innerText = "PARADO";
+                botStatus.classList.remove('text-bybit-green', 'text-bybit-orange');
+                botStatus.classList.add('text-bybit-red');
+                loadingSpinner.classList.add('hidden');
+            }
+        } 
+
+        // PNL baseado no entryPrice (que deve ser atualizado pelo bot_logic.js no Firebase)
+        let pnlDisplay = '--%';
+        if (botState.currentHolding !== BASE_COIN && botState.entryPrice > 0) {
+            // Se tiver um preço de entrada, a UI não consegue calcular o PNL ao vivo, apenas mostra o status
+             pnlDisplay = 'Aguardando Sincronização...'; 
+        } else if (botState.currentHolding === BASE_COIN) {
+             pnlDisplay = 'NA';
+        }
+        
+        if (currentHoldingDisplay) currentHoldingDisplay.innerText = `${botState.currentHolding} / PNL: ${pnlDisplay}`;
+        if (currentBalanceDisplay) currentBalanceDisplay.innerText = `${botState.balanceAmount.toFixed(8)} ${botState.currentHolding}`;
+
+        tfButtons.forEach(btn => {
+            btn.classList.remove('active-tf');
+            if (btn.getAttribute('data-tf') === botState.timeframe) {
+                btn.classList.add('active-tf');
+            }
+        });
+        
+        const authStatus = document.getElementById('auth-status');
+        if (authStatus) {
+            if (isAuthReady && userId !== 'offline_user' && userId !== 'init_failed' && userId !== 'unauthenticated') {
+                 authStatus.style.display = 'block';
+                 authStatus.className = 'p-2 text-sm rounded-lg text-center bg-green-100 text-green-700';
+                 authStatus.innerText = '✅ Firestore Conectado (Estado Persistido)';
+            } else if (userId === 'offline_user') {
+                 authStatus.style.display = 'block';
+                 authStatus.className = 'p-2 text-sm rounded-lg text-center bg-yellow-100 text-yellow-700';
+                 authStatus.innerText = '⚠️ Modo Offline: Sem Persistência de Estado';
+            } else if (userId === 'unauthenticated' || userId === 'init_failed') {
+                 authStatus.style.display = 'block';
+                 authStatus.className = 'p-2 text-sm rounded-lg text-center bg-red-100 text-red-700';
+                 authStatus.innerText = '❌ Firebase/Autenticação Pendente/Falha';
+            }
+        }
+    }
+
+    // --- Inicialização (ENVELOPADO EM DOMContentLoaded) ---
+    
+    document.addEventListener('DOMContentLoaded', (event) => {
+        logMessage("DOM totalmente carregado. Iniciando serviços...", 'info');
+        
+        // REFACTOR: Listener de Timeframe agora chama a API para mudar no servidor
+        document.querySelectorAll('.tf-btn').forEach(button => {
+            button.addEventListener('click', async function() {
+                const newTimeframe = this.getAttribute('data-tf');
+                logMessage(`Enviando comando de alteração de Timeframe para ${newTimeframe} min...`, 'info');
+                
+                try {
+                    const response = await fetch(`${BACKEND_URL}/api/set-timeframe`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ timeframe: newTimeframe })
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        logMessage(`✅ Timeframe alterado no servidor para **${newTimeframe} min**!`, 'success');
+                    } else {
+                        logMessage(`❌ Falha ao alterar Timeframe via API: ${data.message}`, 'error');
+                    }
+                } catch (e) {
+                    logMessage(`❌ Falha de conexão ao enviar Timeframe para API (${BACKEND_URL}): ${e.message}`, 'error');
+                }
+                // O Firestore Listener irá detectar a mudança e atualizar a UI.
+            });
+        });
+
+        // 🛑 REMOVIDO: fetchAndFilterSpotSymbols() pois isso é trabalho do servidor
+        // Mantenha o display de moedas como Carregando
+        const monitoredDisplay = document.querySelector('.p-2.bg-green-50 p:nth-child(2)');
+        if (monitoredDisplay) {
+            monitoredDisplay.innerText = `Sincronizando com o Back-end...`;
+        }
+
+        initializeFirebase(); 
+        updateUIStatus();
+    });
+
+</script>
